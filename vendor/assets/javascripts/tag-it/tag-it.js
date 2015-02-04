@@ -28,6 +28,7 @@
 
     $.widget('ui.tagit', {
         options: {
+            showAvatarImage   : false,
             allowDuplicates   : false,
             caseSensitive     : true,
             fieldName         : 'tags',
@@ -139,16 +140,29 @@
 
             if (!this.options.autocomplete.source) {
                 this.options.autocomplete.source = function(search, showChoices) {
+                  if (this.options.showAvatarImage == false) {
                     var filter = search.term.toLowerCase();
                     var choices = $.grep(this.options.availableTags, function(element) {
                         // Only match autocomplete options that begin with the search term.
                         // (Case insensitive.)
-                        return (element.toLowerCase().indexOf(filter) === 0);
+                    //    return (element.toLowerCase().indexOf(filter) === 0);
+                        return (element.toLowerCase().match(filter));
                     });
                     if (!this.options.allowDuplicates) {
                         choices = this._subtractArray(choices, this.assignedTags());
                     }
                     showChoices(choices);
+                  }
+                  else {
+                    var filter = search.term.toLowerCase();
+                    var choices = $.grep(this.options.availableTags, function(element) {
+                      return ($(element).attr("label").toLowerCase().match(filter));
+                    });
+                    if (!this.options.allowDuplicates) {
+                      choices = this._subtractArray(choices, this.assignedTags());
+                    }
+                    showChoices(choices);
+                  }
                 };
             }
 
@@ -288,26 +302,36 @@
 
             // Autocomplete.
             if (this.options.availableTags || this.options.tagSource || this.options.autocomplete.source) {
+              if (this.options.showAvatarImage == true) {
                 var autocompleteOptions = {
                     select: function(event, ui) {
-                        that.createTag(ui.item.value);
-                        // Preventing the tag input to be updated with the chosen value.
-                        return false;
+                      that.createTagWithId(ui.item);
+                      return false;
                     }
                 };
-                $.extend(autocompleteOptions, this.options.autocomplete);
-
-                // tagSource is deprecated, but takes precedence here since autocomplete.source is set by default,
-                // while tagSource is left null by default.
-                autocompleteOptions.source = this.options.tagSource || autocompleteOptions.source;
-
-                this.tagInput.autocomplete(autocompleteOptions).bind('autocompleteopen.tagit', function(event, ui) {
-                    that.tagInput.data('autocomplete-open', true);
-                }).bind('autocompleteclose.tagit', function(event, ui) {
-                    that.tagInput.data('autocomplete-open', false);
-                });
-
-                this.tagInput.autocomplete('widget').addClass('tagit-autocomplete');
+              }
+              else {
+                var autocompleteOptions = {
+                    select: function(event, ui) {
+                      that.createTag(ui.item.value);
+                      // Preventing the tag input to be updated with the chosen value.
+                      return false;
+                    }
+                };
+              }
+              $.extend(autocompleteOptions, this.options.autocomplete);
+              
+              // tagSource is deprecated, but takes precedence here since autocomplete.source is set by default,
+              // while tagSource is left null by default.
+              autocompleteOptions.source = this.options.tagSource || autocompleteOptions.source;
+              
+              this.tagInput.autocomplete(autocompleteOptions).bind('autocompleteopen.tagit', function(event, ui) {
+                  that.tagInput.data('autocomplete-open', true);
+              }).bind('autocompleteclose.tagit', function(event, ui) {
+                  that.tagInput.data('autocomplete-open', false);
+              });
+              
+              this.tagInput.autocomplete('widget').addClass('tagit-autocomplete');
             }
         },
 
@@ -441,6 +465,93 @@
 
         _effectExists: function(name) {
             return Boolean($.effects && ($.effects[name] || ($.effects.effect && $.effects.effect[name])));
+        },
+        
+        createTagWithId: function(item, additionalClass, duringInitialization) {
+          var that = this;
+          
+          value = $.trim(item.value);
+
+          if(this.options.preprocessTag) {
+            value = this.options.preprocessTag(value);
+          }
+
+          if (value === '') {
+            return false;
+          }
+
+          if (!this.options.allowDuplicates && !this._isNew(value)) {
+              var existingTag = this._findTagByLabel(value);
+              if (this._trigger('onTagExists', null, {
+                  existingTag: existingTag,
+                  duringInitialization: duringInitialization
+              }) !== false) {
+                  if (this._effectExists('highlight')) {
+                      existingTag.effect('highlight');
+                  }
+              }
+              return false;
+          }
+
+          if (this.options.tagLimit && this._tags().length >= this.options.tagLimit) {
+              this._trigger('onTagLimitExceeded', null, {duringInitialization: duringInitialization});
+              return false;
+          }
+
+          var label = $(this.options.onTagClicked ? '<a class="tagit-label"></a>' : '<span class="tagit-label"></span>').text(value);
+
+          // Create tag.
+          var tag = $('<li></li>')
+              .addClass('tagit-choice ui-widget-content ui-state-default ui-corner-all')
+              .addClass(additionalClass)
+              .append(label);
+
+          if (this.options.readOnly){
+              tag.addClass('tagit-choice-read-only');
+          } else {
+              tag.addClass('tagit-choice-editable');
+              // Button for removing the tag.
+              var removeTagIcon = $('<span></span>')
+                  .addClass('ui-icon ui-icon-close');
+              var removeTag = $('<a><span class="text-icon">\xd7</span></a>') // \xd7 is an X
+                  .addClass('tagit-close')
+                  .append(removeTagIcon)
+                  .click(function(e) {
+                      // Removes a tag when the little 'x' is clicked.
+                      that.removeTag(tag);
+                  });
+              tag.append(removeTag);
+          }
+
+          if (this._trigger('beforeTagAdded', null, {
+              tag: tag,
+              tagLabel: this.tagLabel(tag),
+              duringInitialization: duringInitialization
+          }) === false) {
+              return;
+          }
+
+          var tags = this.assignedTags();
+          tags.push(item.id);
+          this._updateSingleTagsField(tags);
+          
+          // DEPRECATED.
+          this._trigger('onTagAdded', null, tag);
+
+          this.tagInput.val('');
+
+          // Insert tag.
+          this.tagInput.parent().before(tag);
+
+          this._trigger('afterTagAdded', null, {
+              tag: tag,
+              tagLabel: this.tagLabel(tag),
+              duringInitialization: duringInitialization
+          });
+
+          if (this.options.showAutocompleteOnFocus && !duringInitialization) {
+              setTimeout(function () { that._showAutocomplete(); }, 0);
+          }
         },
 
         createTag: function(value, additionalClass, duringInitialization) {
